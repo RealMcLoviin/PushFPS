@@ -16,9 +16,11 @@ float3 perceptual(float3 v) { return outputMode == 1 ? sqrt(max(v, 0) / 2.5) : v
 float luma(float3 v) { return dot(v, float3(0.2126, 0.7152, 0.0722)); }
 float3 at(int2 p) { return perceptual(currentTex[clamp(p, int2(0, 0), int2(width - 1, height - 1))].rgb); }
 
-// 1/0.06: about 38 frames (1.3 s at 30 FPS) to reach 0.9 from zero.
-static const float kRise = 0.06;
-static const float kStill = 0.02;   // largest channel change still counted as the same pixel
+// 0.35 reaches a lockable confidence in about five quiet frames (~170 ms at 30 FPS).
+// One frame stays near 0.35, under the compose threshold, so a single pair does not lock.
+static const float kRise = 0.35;
+static const float kQuiet = 0.055;  // luma steps below this are Elgato NV12 noise, not motion
+static const float kMoved = 0.080;  // a real luma step drops the pixel on that same frame
 static const float kFade = 0.97;    // held contrast fades about 3 % per frame
 static const float kPairStill = 2.0 / 255.0 + 1e-4;   // hudstill::kPairStill
 
@@ -39,12 +41,12 @@ void main(uint3 id : SV_DispatchThreadID) {
                                max(abs(l - luma(at(p + int2(0, 1)))), abs(l - luma(at(p - int2(0, 1))))));
     float2 s = stateTex[id.xy].xy;
     // Elgato NV12 chroma leaks into R/B while the HUD luma stays put. A hard reset on any
-    // channel never lets a bar reach a second of confidence. Real motion is a luma step.
-    const bool moved = lumaChange > 0.055;
-    const bool hold = lumaChange < 0.012 || (lumaChange < 0.028 && change < 0.07);
+    // channel never lets a bar reach confidence. Real motion is a luma step. Steps between
+    // the noise floor and real motion hold confidence: decaying them is what left the bar
+    // centre under the lock while the camera pulled it.
+    const bool moved = lumaChange > kMoved;
     if (moved) s.x = 0;
-    else if (hold) s.x = s.x + (1 - s.x) * kRise;
-    else s.x *= 0.82;
+    else if (lumaChange < kQuiet) s.x = s.x + (1 - s.x) * kRise;
     s.y = moved ? contrast : max(contrast, s.y * kFade);
     stateTex[id.xy] = float4(s, same, 0);
 }

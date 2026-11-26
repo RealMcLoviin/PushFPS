@@ -14,10 +14,11 @@
 //      while the pixel stays the same from frame to frame and drops to zero the
 //      moment it changes; beside it, how much contrast the pixel has with its
 //      neighbours (a held maximum that fades).
-//   2. compose (one dispatch per generated frame): where a pixel has been still
-//      for about a second and has an edge, the generated frame takes it from the
-//      held real frame instead (feathered, grown by one pixel), so the overlay
-//      stays exactly where the console drew it.
+//   2. compose (one dispatch per generated frame): where a pixel's luma has been
+//      quiet for a few frames and it, or a short ring around it, has an edge, the
+//      generated frame takes that pixel from the held real frame. A confident
+//      pixel is replaced whole, so capture noise cannot leave a warped mix in the
+//      middle of a bar. The rim falls off. A pixel that moves is released then.
 // A still pixel looks the same in the real frame, so locking one that is not
 // HUD (a still wall) changes nothing visible; a pixel that starts to move is
 // released on that same frame. Capture noise that never lets a pixel settle

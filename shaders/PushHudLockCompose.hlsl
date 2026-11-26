@@ -31,7 +31,8 @@ static const float kSpreadR[32] = {
     16, 16, 16, 16, 15.56, 15.56, 15.56, 15.56,
     24, 24, 24, 24, 24.04, 24.04, 24.04, 24.04
 };
-float stillOf(float2 s) { return smoothstep(0.80, 0.95, s.x); }
+// Confidence from PushHudLockUpdate. 0.35 after one quiet frame stays below this gate.
+float stillOf(float2 s) { return smoothstep(0.70, 0.90, s.x); }
 float edgeOf(float2 s) {
     const float edge = outputMode == 1 ? 0.03 : 0.04;
     return smoothstep(edge, edge * 2.5, s.y);
@@ -60,7 +61,10 @@ void main(uint3 id : SV_DispatchThreadID) {
                 influence = max(influence, edgeOf(q) * stillOf(q) * fall);
             }
         }
-        w = still * smoothstep(0.04, 0.22, influence);
+        // Snap a confident interior to the real pixel. A partial mix keeps the warped
+        // frame in the bar, which is the wobble. The falloff at the rim stays soft.
+        w = still * smoothstep(0.05, 0.16, influence);
+        w = smoothstep(0.50, 0.78, w);
     }
     // The still rule: the same in both real frames, with company, in a surrounding that mostly moves.
     // The surrounding is asked first: over a still picture (a menu) the test ends there for every pixel.
