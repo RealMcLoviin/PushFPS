@@ -30,15 +30,21 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float3 c = at(p);
     const float3 d = abs(c - perceptual(previousTex[id.xy].rgb));
     const float change = max(d.r, max(d.g, d.b));
+    // z stays on the tight pair test. The 16x16 still rule reads it and must not grow.
     const float same = change <= kPairStill ? 1.0 : 0.0;
-    // The still rule alone needs neither the neighbours nor what the state held: four reads of the
-    // frame and one of the state less for every pixel (the rule is on for everyone, the lock is a choice).
     if (lockOn == 0) { stateTex[id.xy] = float4(0, 0, same, 0); return; }
     const float l = luma(c);
+    const float lumaChange = abs(l - luma(perceptual(previousTex[id.xy].rgb)));
     const float contrast = max(max(abs(l - luma(at(p + int2(1, 0)))), abs(l - luma(at(p - int2(1, 0))))),
                                max(abs(l - luma(at(p + int2(0, 1)))), abs(l - luma(at(p - int2(0, 1))))));
     float2 s = stateTex[id.xy].xy;
-    s.x = change < kStill ? s.x + (1 - s.x) * kRise : 0;
-    s.y = change < kStill ? max(contrast, s.y * kFade) : contrast;
+    // Elgato NV12 chroma leaks into R/B while the HUD luma stays put. A hard reset on any
+    // channel never lets a bar reach a second of confidence. Real motion is a luma step.
+    const bool moved = lumaChange > 0.055;
+    const bool hold = lumaChange < 0.012 || (lumaChange < 0.028 && change < 0.07);
+    if (moved) s.x = 0;
+    else if (hold) s.x = s.x + (1 - s.x) * kRise;
+    else s.x *= 0.82;
+    s.y = moved ? contrast : max(contrast, s.y * kFade);
     stateTex[id.xy] = float4(s, same, 0);
 }
