@@ -11,6 +11,7 @@
 #include "veyra/gfx/ReflexSession.h"
 #include "veyra/gfx/NvidiaVrr.h"
 #include "veyra/engine/PresentationSettings.h"
+#include "veyra/engine/VrrSync.h"
 #include "veyra/engine/PresentCapture.h"
 #include "veyra/engine/DisplayStateService.h"
 #include <chrono>
@@ -117,14 +118,12 @@ public:
     // possible on the monitor, so Automatic presents like explicit Vsync.
     // vrrSync() is what the last configurePresentation applied.
     static bool vrrSyncWanted(const PresentationSettings& requested,const gfx::VrrState& vrr){
-        return requested.variableRefresh&&requested.display==DisplaySync::Automatic&&gfx::vrrLevel(vrr)>=3;
+        return variableRefreshRequested(requested,vrr);
     }
-    // Level 3 only means VRR might be requested. Pair VSync when the driver
-    // reports it active. AMD FreeSync never reports active, so this panel
-    // stays on Automatic Present(0,0). The engine compares this, not the
-    // level-3 request, or it would reconfigure pacing on every frame.
+    // The engine compares this, not the level-3 request, or pacing would
+    // reconfigure on every frame while the driver leaves VRR inactive.
     static bool vrrSyncApplied(const PresentationSettings& requested,const gfx::VrrState& vrr){
-        return vrrSyncWanted(requested,vrr)&&gfx::vrrLevel(vrr)>=4;
+        return variableRefreshPaired(requested,vrr);
     }
     bool vrrSync()const{return vrrSync_;}
     diagnostics::GpuSample blitTiming(ID3D12Fence* f,uint64_t revision=0,uint64_t epoch=0){gpuTimer_.collect(presentationFence_?presentationFence_.Get():f);if((revision&&gpuTimer_.last().identity.settingsRevision!=revision)||(epoch&&gpuTimer_.last().identity.epoch!=epoch)){diagnostics::GpuSample pending;pending.state=diagnostics::SampleState::Pending;return pending;}return gpuTimer_.last().gpu[size_t(diagnostics::GpuStage::Blit)];}

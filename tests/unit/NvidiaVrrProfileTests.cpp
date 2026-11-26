@@ -1,4 +1,5 @@
 #include "veyra/gfx/NvidiaVrrProfile.h"
+#include "veyra/engine/VrrSync.h"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -81,6 +82,18 @@ int main(int argc, char** argv) {
         }
         if (argc != 1) return 2;
         policyTests();
+        using namespace veyra::engine;
+        PresentationSettings req;
+        req.variableRefresh=true;
+        req.display=DisplaySync::Automatic;
+        const auto amd=vrrFromFreeSync(pushFreeSyncFrom(0,0xf,0,7));
+        require(variableRefreshRequested(req,amd)&&!variableRefreshPaired(req,amd),
+            "FreeSync requested but inactive does not wait on VSync");
+        auto active=amd;active.enabled=true;
+        require(vrrLevel(active)==4&&variableRefreshPaired(req,active),
+            "driver-active VRR still pairs VSync");
+        req.variableRefresh=false;
+        require(!variableRefreshPaired(req,active),"VRR switch off never pairs VSync");
         std::cout << assertions << " VRR profile policy assertions passed (no driver writes)\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
