@@ -84,6 +84,10 @@ struct Status {
     // "no-grids", "shader".
     bool predict = false;
     std::string predictState;
+    // Retime: one inference at t=0.5, other times from those grids. "" until init, "on", or why not:
+    // "off" (VEYRA_PUSHFLOW_RETIME=0), "no-grids", "shader". The t=0.5 picture stays resolve().
+    bool retime = false;
+    std::string retimeState;
 };
 
 struct Telemetry {
@@ -147,6 +151,9 @@ public:
     // `intervalSeconds`: the time between the pair's two real frames (0 = unknown), for PushFlow 2's Response.
     bool forecast(ID3D12GraphicsCommandList* list, ID3D12Resource* previous, ID3D12Resource* current, ID3D12Resource* output, float ahead,
                   double intervalSeconds = 0);
+    // A time in (0,1) other than the half-way frame, from the grids of the last pack(0.5)/infer().
+    // The half-way frame stays resolve(), so this is not used at t=0.5. False when status().retime is off.
+    bool retime(ID3D12GraphicsCommandList* list, ID3D12Resource* previous, ID3D12Resource* current, ID3D12Resource* output, float timestep);
     double lastInferCpuMs() const;
     Telemetry telemetry() const;
     // Tests: the network's input buffer and RGB output buffer (UNORDERED_ACCESS, planar float).

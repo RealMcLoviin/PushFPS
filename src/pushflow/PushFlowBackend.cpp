@@ -226,7 +226,11 @@ struct PushFlowBackend::Impl {
     Encoding encoding = Encoding::Encoded;
     uint32_t channels = 7;
     ModelFacts facts;
-    pipeline::ComputePass packPass, unpackPass, rebuildPass;
+    pipeline::ComputePass packPass, unpackPass, rebuildPass, retimePass;
+    UINT retimeRing = 0;
+    bool retimeOn = false;
+    bool retimeThisCall = false;
+    float retimeTimestep = 0.5f;
     pipeline::DescriptorStager stager;
     // Tensors: 0 input, 1 rgb, 2 grid0, 3 grid1, 4 mask (grids/mask only with the rebuild outputs).
     std::array<ComPtr<ID3D12Resource>, 5> buffers;
@@ -950,6 +954,24 @@ bool PushFlowBackend::initialize(ID3D12Device* device, ID3D12CommandQueue* queue
         bufferUav(p.buffers[4].Get(), floats[4], cpuSlot(p.rebuildPass, 2));
         pipeline::makeUav(device, p.picture.Get(), p.format, cpuSlot(p.rebuildPass, 3));
     }
+    // Retime is on unless VEYRA_PUSHFLOW_RETIME=0. A missing shader leaves today's three inferences.
+    {
+        wchar_t retimeEnv[8]{};
+        const DWORD retimeN = GetEnvironmentVariableW(L"VEYRA_PUSHFLOW_RETIME", retimeEnv, 8);
+        const bool retimeAskedOff = retimeN == 1 && retimeEnv[0] == L'0';
+        if (retimeAskedOff) p.status.retimeState = "off";
+        else if (!p.haveGrids) p.status.retimeState = "no-grids";
+        else if (!p.retimePass.loadShader("PushFlowRetime.dxil", cs) || !p.retimePass.create(device, cs, 4 + 2 * kSrvRing, 2, 4, 16)) p.status.retimeState = "shader";
+        else {
+            bufferUav(p.buffers[2].Get(), floats[2], cpuSlot(p.retimePass, 0));
+            bufferUav(p.buffers[3].Get(), floats[3], cpuSlot(p.retimePass, 1));
+            bufferUav(p.buffers[4].Get(), floats[4], cpuSlot(p.retimePass, 2));
+            pipeline::makeUav(device, p.picture.Get(), p.format, cpuSlot(p.retimePass, 3));
+            p.retimeOn = true; p.status.retime = true; p.status.retimeState = "on";
+        }
+        if (p.status.retime) veyra::log::info("pushflow", "retime on (one inference per pair, t=0.5 stays resolve)");
+        else if (!retimeAskedOff) veyra::log::warn("pushflow", "Retime is not used: " + p.status.retimeState);
+    }
     // PushFlow 2's Guard (opt-in; shaders/PushGuard.hlsl). It judges by the model's grids and mask, in
     // tiles of 16 x 16 motion pixels; whatever is missing here leaves PushFlow as it is without it.
     if (guard) {
@@ -1251,9 +1273,9 @@ bool PushFlowBackend::infer() {
     if (summarize) {
         const auto t = telemetry();
         veyra::log::info("pushflow", std::format("telemetry inferences={} p50={:.2f}ms p95={:.2f}ms max={:.2f}ms fullPacks={} timePacks={} precision={} rebuild={} "
-            "encoderCache={} encoderRuns={} kept={} made={}",
+            "encoderCache={} encoderRuns={} kept={} made={} retime={}",
             t.inferences, t.inferP50Ms, t.inferP95Ms, t.inferMaxMs, t.fullPacks, t.timePacks, p.status.precision, p.status.rebuild ? 1 : 0,
-            p.status.splitState.empty() ? std::string("-") : p.status.splitState, t.encoderRuns, t.featureHits, t.featureMisses));
+            p.status.splitState.empty() ? std::string("-") : p.status.splitState, t.encoderRuns, t.featureHits, t.featureMisses, p.status.retime ? 1 : 0));
     }
     return done;
 #else
@@ -1275,18 +1297,29 @@ bool PushFlowBackend::resolve(ID3D12GraphicsCommandList* list, ID3D12Resource* p
     for (UINT i = 0; i < outputs; ++i) { barriers[i].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV; barriers[i].UAV.pResource = p.buffers[i + 1].Get(); }
     list->ResourceBarrier(outputs, barriers);
     p.states.transition(list, p.picture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    if (p.status.rebuild && previous && current) {
-        const UINT first = 4 + 2 * p.rebuildRing;
-        p.rebuildRing = (p.rebuildRing + 1) % kSrvRing;
+    const bool retiming = p.retimeThisCall && p.retimeOn && previous && current;
+    if (retiming || (p.status.rebuild && previous && current)) {
+        pipeline::ComputePass& pass = retiming ? p.retimePass : p.rebuildPass;
+        UINT& ring = retiming ? p.retimeRing : p.rebuildRing;
+        const UINT first = 4 + 2 * ring;
+        ring = (ring + 1) % kSrvRing;
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
         view.Format = p.format; view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; view.Texture2D.MipLevels = 1;
-        p.stager.stageSrv(previous, &view, p.rebuildPass.heap.Get(), first);
-        p.stager.stageSrv(current, &view, p.rebuildPass.heap.Get(), first + 1);
-        const float constants[12] = {bits(p.width), bits(p.height), bits(p.status.padW), bits(p.status.padH),
-                                     bits(p.status.modelW), bits(p.status.modelH), bits(uint32_t(p.encoding)), bits(p.facts.alignCorners ? 1u : 0u),
-                                     bits(p.facts.maskForFirst ? 1u : 0u), 0.0f, 0.0f, 0.0f};
-        p.rebuildPass.bind(list, constants, gpuSlot(p.rebuildPass, first), gpuSlot(p.rebuildPass, 0));
+        p.stager.stageSrv(previous, &view, pass.heap.Get(), first);
+        p.stager.stageSrv(current, &view, pass.heap.Get(), first + 1);
+        if (retiming) {
+            const float constants[16] = {bits(p.width), bits(p.height), bits(p.status.padW), bits(p.status.padH),
+                                         bits(p.status.modelW), bits(p.status.modelH), bits(uint32_t(p.encoding)), bits(p.facts.alignCorners ? 1u : 0u),
+                                         bits(p.facts.maskForFirst ? 1u : 0u), 0.0f, 0.0f, 0.0f,
+                                         std::clamp(p.retimeTimestep, 0.0f, 1.0f), 0.0f, 0.0f, 0.0f};
+            pass.bind(list, constants, gpuSlot(pass, first), gpuSlot(pass, 0));
+        } else {
+            const float constants[12] = {bits(p.width), bits(p.height), bits(p.status.padW), bits(p.status.padH),
+                                         bits(p.status.modelW), bits(p.status.modelH), bits(uint32_t(p.encoding)), bits(p.facts.alignCorners ? 1u : 0u),
+                                         bits(p.facts.maskForFirst ? 1u : 0u), 0.0f, 0.0f, 0.0f};
+            pass.bind(list, constants, gpuSlot(pass, first), gpuSlot(pass, 0));
+        }
     } else {
         const float constants[8] = {bits(p.width), bits(p.height), bits(p.status.padW), bits(p.status.padH),
                                     bits(p.status.modelW), bits(p.status.modelH), bits(uint32_t(p.encoding)), 0.0f};
@@ -1396,6 +1429,20 @@ bool PushFlowBackend::forecast(ID3D12GraphicsCommandList* list, ID3D12Resource* 
     p.states.transition(list, p.predicted.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE);
     list->CopyResource(output, p.predicted.Get());
     return true;
+}
+
+bool PushFlowBackend::retime(ID3D12GraphicsCommandList* list, ID3D12Resource* previous, ID3D12Resource* current, ID3D12Resource* output, float timestep) {
+    auto& p = *p_;
+    if (!p.status.ready || !p.retimeOn || !list || !previous || !current || !output) return false;
+    if (!(timestep > 0.0f && timestep < 1.0f)) return false;
+    const float saved = p.lastTimestep;
+    p.lastTimestep = timestep;
+    p.retimeTimestep = timestep;
+    p.retimeThisCall = true;
+    const bool ok = resolve(list, previous, current, output);
+    p.retimeThisCall = false;
+    p.lastTimestep = saved;
+    return ok;
 }
 
 } // namespace veyra::pushflow

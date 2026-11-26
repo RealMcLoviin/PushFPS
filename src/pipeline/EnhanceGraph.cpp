@@ -4529,25 +4529,34 @@ bool EnhanceGraph::process(const AVFrame* frame, double ptsMs, bool reset, Frame
                 if(f.pts100ns>out.batch.b100ns&&afterRealCount<afterReal.size())afterReal[afterRealCount++]=std::move(f);
                 continue;
             }
-            auto* plist=ring_.acquireNext(slot,st);if(!plist)return false;
-            if(sub==1){gpuTimer_.mark(plist,GpuStage::FgBatch);gpuTimer_.mark(plist,GpuStage::Fg1);}
-            // With Crosshair Hold the pair PushFlow sees is the filled pair (fgInput is the real frame otherwise).
-            tracker_.transition(plist,fgInput(1-parity),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            tracker_.transition(plist,fgInput(parity),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            // The pair is packed once; later subframes only rewrite the time plane.
-            // The two real frames' numbers (this graph's own count, from 1) let the encoder cache keep the
-            // second frame's features for the pair after this one, where it is the first.
-            if(!pushFlow_->pack(plist,fgInput(1-parity),fgInput(parity),float(sub)/float(outputMultiplier),sub>1,realFrameIndex_,realFrameIndex_+1)){failedBackend_=engine::FailedBackend::Fg;return false;}
-            tracker_.transition(plist,fgInput(1-parity),D3D12_RESOURCE_STATE_COMMON);
-            tracker_.transition(plist,fgInput(parity),D3D12_RESOURCE_STATE_COMMON);
-            if(!submitGraph(slot))return false;
-            if(!pushFlow_->infer()){failedBackend_=engine::FailedBackend::Fg;return false;}
+            // Retime: one pack+infer at t=0.5 per pair. The half-way subframe stays resolve().
+            // VEYRA_PUSHFLOW_RETIME=0, or a missing shader, keeps a pack+infer on every subframe.
+            const bool retime=pushFlow_->status().retime;
+            const float stepT=float(sub)/float(outputMultiplier);
+            const bool midFrame=sub*2u==outputMultiplier;
+            if(!retime||sub==1){
+                auto* plist=ring_.acquireNext(slot,st);if(!plist)return false;
+                if(sub==1){gpuTimer_.mark(plist,GpuStage::FgBatch);gpuTimer_.mark(plist,GpuStage::Fg1);}
+                // With Crosshair Hold the pair PushFlow sees is the filled pair (fgInput is the real frame otherwise).
+                tracker_.transition(plist,fgInput(1-parity),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                tracker_.transition(plist,fgInput(parity),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                // The pair is packed once; later subframes only rewrite the time plane.
+                // The two real frames' numbers (this graph's own count, from 1) let the encoder cache keep the
+                // second frame's features for the pair after this one, where it is the first.
+                if(!pushFlow_->pack(plist,fgInput(1-parity),fgInput(parity),retime?0.5f:stepT,!retime&&sub>1,realFrameIndex_,realFrameIndex_+1)){failedBackend_=engine::FailedBackend::Fg;return false;}
+                tracker_.transition(plist,fgInput(1-parity),D3D12_RESOURCE_STATE_COMMON);
+                tracker_.transition(plist,fgInput(parity),D3D12_RESOURCE_STATE_COMMON);
+                if(!submitGraph(slot))return false;
+                if(!pushFlow_->infer()){failedBackend_=engine::FailedBackend::Fg;return false;}
+            }
             auto* flist=ring_.acquireNext(slot,st);if(!flist)return false;
             tracker_.transition(flist,genFrame_[generatedSlot].Get(),D3D12_RESOURCE_STATE_COPY_DEST);
             // The Fast tier rebuilds the picture from the full-resolution real frames.
             tracker_.transition(flist,fgInput(1-parity),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             tracker_.transition(flist,fgInput(parity),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            if(!pushFlow_->resolve(flist,fgInput(1-parity),fgInput(parity),genFrame_[generatedSlot].Get())){failedBackend_=engine::FailedBackend::Fg;return false;}
+            if(retime&&!midFrame){
+                if(!pushFlow_->retime(flist,fgInput(1-parity),fgInput(parity),genFrame_[generatedSlot].Get(),stepT)){failedBackend_=engine::FailedBackend::Fg;return false;}
+            }else if(!pushFlow_->resolve(flist,fgInput(1-parity),fgInput(parity),genFrame_[generatedSlot].Get())){failedBackend_=engine::FailedBackend::Fg;return false;}
             tracker_.transition(flist,fgInput(1-parity),D3D12_RESOURCE_STATE_COMMON);
             tracker_.transition(flist,fgInput(parity),D3D12_RESOURCE_STATE_COMMON);
             composeOverlay(flist,generatedSlot,parity,float(sub)/float(outputMultiplier));
