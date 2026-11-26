@@ -31,8 +31,9 @@ static const float kSpreadR[32] = {
     16, 16, 16, 16, 15.56, 15.56, 15.56, 15.56,
     24, 24, 24, 24, 24.04, 24.04, 24.04, 24.04
 };
-// Confidence from PushHudLockUpdate. 0.35 after one quiet frame stays below this gate.
-float stillOf(float2 s) { return smoothstep(0.70, 0.90, s.x); }
+// Confidence from PushHudLockUpdate. One quiet frame is about 0.35 and stays shut.
+// The gate sits at eight quiet frames so a moving texture is not mistaken for HUD.
+float stillOf(float2 s) { return smoothstep(0.93, 0.985, s.x); }
 float edgeOf(float2 s) {
     const float edge = outputMode == 1 ? 0.03 : 0.04;
     return smoothstep(edge, edge * 2.5, s.y);
@@ -64,7 +65,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         // Snap a confident interior to the real pixel. A partial mix keeps the warped
         // frame in the bar, which is the wobble. The falloff at the rim stays soft.
         w = still * smoothstep(0.05, 0.16, influence);
-        w = smoothstep(0.50, 0.78, w);
+        w = smoothstep(0.55, 0.82, w);
     }
     // The still rule: the same in both real frames, with company, in a surrounding that mostly moves.
     // The surrounding is asked first: over a still picture (a menu) the test ends there for every pixel.

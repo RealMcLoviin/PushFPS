@@ -16,11 +16,12 @@ float3 perceptual(float3 v) { return outputMode == 1 ? sqrt(max(v, 0) / 2.5) : v
 float luma(float3 v) { return dot(v, float3(0.2126, 0.7152, 0.0722)); }
 float3 at(int2 p) { return perceptual(currentTex[clamp(p, int2(0, 0), int2(width - 1, height - 1))].rgb); }
 
-// 0.35 reaches a lockable confidence in about five quiet frames (~170 ms at 30 FPS).
-// One frame stays near 0.35, under the compose threshold, so a single pair does not lock.
+// 0.35 reaches the compose gate in about eight quiet frames (~270 ms at 30 FPS).
+// One frame stays near 0.35, so a single pair does not lock.
+// Quiet is 0.035, not wider: the moving-picture test leaked 117 pixels at 0.055.
 static const float kRise = 0.35;
-static const float kQuiet = 0.055;  // luma steps below this are Elgato NV12 noise, not motion
-static const float kMoved = 0.080;  // a real luma step drops the pixel on that same frame
+static const float kQuiet = 0.035;  // luma steps below this rise; Elgato noise on a flat bar
+static const float kMoved = 0.090;  // a real luma step drops the pixel on that same frame
 static const float kFade = 0.97;    // held contrast fades about 3 % per frame
 static const float kPairStill = 2.0 / 255.0 + 1e-4;   // hudstill::kPairStill
 
