@@ -56,8 +56,17 @@ public:
         return depth <= 8 ? kBand8 : ((kBand8 * ((1u << depth) - 1) + 127) / 255) << shift;
     }
     // Components a repeat may have beyond the band: 63 in 3840x2160 NV12, 15 in
-    // 1920x1080 NV12, none below 196608 components.
-    static constexpr uint64_t toleranceFor(uint64_t components) { return components / 196608; }
+    // 1920x1080 NV12, none below 196608 components. Above 1080p and below 4K the
+    // allowance is 16. 1440p NV12 used to allow 28, and an Elgato HD60 X at
+    // 2560x1440 dropped real 30 fps frames that differed by 22-28 components
+    // (kept rate fell to about 15). Clean repeats on that card had none over.
+    static constexpr uint64_t toleranceFor(uint64_t components) {
+        constexpr uint64_t k1080Nv12 = 1920ull * 1080 * 3 / 2;
+        constexpr uint64_t k4kNv12 = 3840ull * 2160 * 3 / 2;
+        if (components >= k4kNv12) return components / 196608;
+        if (components > k1080Nv12) return 16;
+        return components / 196608;
+    }
     // A sample this far beyond the band is a new picture whatever the rest
     // holds, so the comparison stops there: `over` then saturates at this bound
     // and max8 covers the compared part. Repeats (at most toleranceFor(): 63 in

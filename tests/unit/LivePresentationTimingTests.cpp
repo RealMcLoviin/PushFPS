@@ -381,6 +381,11 @@ int main(){
         using veyra::engine::liveGeneratedGrace100ns;
         check(liveGeneratedGrace100ns(1000000,1000000)==100000&&liveGeneratedGrace100ns(1000000,1010000)==100000,"on time or early callback: a generated frame keeps 10 ms from its due time");
         check(liveGeneratedGrace100ns(1030000,1000000)==130000,"late callback: its frame expires when it did on the callback anchor");
+        using veyra::engine::holdLateGenerationForGpu;
+        check(holdLateGenerationForGpu(true,false,140000,100000,83333),"a batch still on the GPU, 14 ms late, stays within one 120 Hz slot of the 10 ms grace");
+        check(!holdLateGenerationForGpu(true,false,200000,100000,83333),"lateness past that slot still expires");
+        check(!holdLateGenerationForGpu(false,false,140000,100000,83333),"a ready batch does not get the extra slot");
+        check(!holdLateGenerationForGpu(true,true,140000,100000,83333),"a forecast replaced by a newer real frame does not stay");
         using veyra::engine::liveFramesShareRefresh;
         const double refresh=166667;
         check(liveFramesShareRefresh(1020000,1100000,1000000,refresh,10000),"no vblank between the two presents: one refresh shows them");
@@ -510,8 +515,8 @@ int main(){
         check(!exact.observe(&e1,1,PictureComponents::Exact).repeat,"packed 10-bit / 5-6-bit layouts compare exactly");
         check(!bytes(ref,base,32).repeat,"a different layout is a new picture");
         PictureReference one{1},two{2};check(bytes(one,base).id!=bytes(two,base).id,"picture numbers of different references never collide");
-        check(PictureReference::toleranceFor(3840ull*2160*3/2)==63&&PictureReference::toleranceFor(1920ull*1080*3/2)==15&&PictureReference::toleranceFor(base.size())==0,
-            "outlier tolerance: 63 components in 4K NV12, 15 in 1080p, none in a small picture");
+        check(PictureReference::toleranceFor(3840ull*2160*3/2)==63&&PictureReference::toleranceFor(1920ull*1080*3/2)==15&&PictureReference::toleranceFor(2560ull*1440*3/2)==16&&PictureReference::toleranceFor(base.size())==0,
+            "outlier tolerance: 63 components in 4K NV12, 16 in 1440p, 15 in 1080p, none in a small picture");
         // 4K NV12 (T911, 2026-11-02): a repeat now and then has one component 4 levels off.
         std::vector<uint8_t> luma(3840*2160),chroma(3840*1080);
         for(size_t i=0;i<luma.size();++i)luma[i]=uint8_t(40+(i*7919+i/3840*31)%160);

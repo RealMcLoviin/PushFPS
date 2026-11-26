@@ -3290,7 +3290,10 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                             const auto decisionTime=host100ns();
                             // A forecast is never shown once a newer real frame is due: that frame is the truth it stood in for.
                             const bool superseded=generated&&batch.fgPredict&&predictNewestReal100ns_>batch.batch.b100ns&&predictNewestDue100ns_<=timeline.deadline(item.pts100ns);
-                            const bool generationExpired=generated&&(superseded||(isCapture?timeline.expired(item.pts100ns,decisionTime,generatedGrace):!fileAwaitingVideo&&previewGeneratedExpired(nowMs(),itemPtsMs)));
+                            const int64_t late100ns=decisionTime-timeline.deadline(item.pts100ns);
+                            const int64_t outputSlot100ns=std::max<int64_t>(1,int64_t(sourceIntervalMs*10000)/std::max(1u,batch.batch.count));
+                            const bool holdForGpu=isCapture&&holdLateGenerationForGpu(!watch->ready.load(),superseded,late100ns,generatedGrace,outputSlot100ns);
+                            const bool generationExpired=generated&&(superseded||(isCapture?timeline.expired(item.pts100ns,decisionTime,generatedGrace)&&!holdForGpu:!fileAwaitingVideo&&previewGeneratedExpired(nowMs(),itemPtsMs)));
                             // XeSS shares the producer queue; native no-FG capture has an explicit GPU-side fence wait.
                             const bool early=submitThenPresent&&!generated&&!watch->ready;
                             if(!watch->frameReadyObserved[s.next]&&item.lease&&item.lease->ready())watch->frameReadyObserved[s.next]=host100ns();

@@ -94,6 +94,13 @@ public:
 // its own callback gives. A late callback must not expire more frames than it did.
 inline constexpr int64_t kLiveGeneratedGrace100ns=100000;
 inline int64_t liveGeneratedGrace100ns(int64_t callback,int64_t anchor){return kLiveGeneratedGrace100ns+std::max<int64_t>(0,callback-anchor);}
+// The GPU batch is still running and the frame is at most one output slot past
+// its grace. Dropping it is the hitch (decision 14 ms late, batch not ready,
+// 2026-11-26). A later frame still expires, and a forecast that a newer real
+// frame has replaced does not stay.
+inline bool holdLateGenerationForGpu(bool gpuInFlight,bool superseded,int64_t late100ns,int64_t grace100ns,int64_t outputSlot100ns){
+    return gpuInFlight&&!superseded&&outputSlot100ns>0&&late100ns>0&&late100ns<=grace100ns+outputSlot100ns;
+}
 // Live VFG 2X: a generated frame is ready base + model time after the callback,
 // its real frame is due an interval + base after it, and the panel shows one of
 // them per refresh. With model time above half the interval they are closer than
