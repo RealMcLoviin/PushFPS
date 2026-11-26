@@ -896,7 +896,10 @@ PresentationSettings VideoPresenter::configurePresentation(gfx::D3D12DeviceConte
     // monitor, driver setting off) Automatic stays Present(0,0).
     displayRefreshHz();
     const bool wasVrrSync=vrrSync_;
-    vrrSync_=vrrSyncWanted(requested,vrr_);
+    // Level 3 only means VRR might be requested. This AMD panel stayed there
+    // with FreeSync off, and Present(1) then waited 7-15 ms for a vblank
+    // (2026-11-26, 240 Hz). Pair VSync only when the driver reports VRR active.
+    vrrSync_=vrrSyncWanted(requested,vrr_)&&gfx::vrrLevel(vrr_)>=4;
     // VRR presentation just started: ask the driver once more whether it runs.
     if(vrrSync_&&!wasVrrSync)vrrConfirmAt_=std::chrono::steady_clock::now()+std::chrono::seconds(3);
     if(vrrSync_){requested.display=DisplaySync::Vsync;effective.display=DisplaySync::Vsync;}
