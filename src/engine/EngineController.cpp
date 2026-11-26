@@ -1526,7 +1526,7 @@ void EngineController::run(HWND window,std::wstring path,PlayerOptions options,s
                 // 可变刷新: the monitor's VRR availability is read again on events
                 // (another monitor, a display change, 重新检测, the VRR
                 // confirmation); a change re-applies.
-                const bool vrrChanged=presenter.vrrSync()!=VideoPresenter::vrrSyncWanted(requested,presenter.displayVrr());
+                const bool vrrChanged=presenter.vrrSync()!=VideoPresenter::vrrSyncApplied(requested,presenter.displayVrr());
                 if(revision==pacingRevision&&presenterGeneration==presenter.generation()&&!vrrChanged&&!capRefreshChanged){
                     // Reflex dropped out at runtime: the queue-depth part of the
                     // low-latency setting stays, so only the status line changes.

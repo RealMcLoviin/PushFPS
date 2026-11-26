@@ -119,6 +119,13 @@ public:
     static bool vrrSyncWanted(const PresentationSettings& requested,const gfx::VrrState& vrr){
         return requested.variableRefresh&&requested.display==DisplaySync::Automatic&&gfx::vrrLevel(vrr)>=3;
     }
+    // Level 3 only means VRR might be requested. Pair VSync when the driver
+    // reports it active. AMD FreeSync never reports active, so this panel
+    // stays on Automatic Present(0,0). The engine compares this, not the
+    // level-3 request, or it would reconfigure pacing on every frame.
+    static bool vrrSyncApplied(const PresentationSettings& requested,const gfx::VrrState& vrr){
+        return vrrSyncWanted(requested,vrr)&&gfx::vrrLevel(vrr)>=4;
+    }
     bool vrrSync()const{return vrrSync_;}
     diagnostics::GpuSample blitTiming(ID3D12Fence* f,uint64_t revision=0,uint64_t epoch=0){gpuTimer_.collect(presentationFence_?presentationFence_.Get():f);if((revision&&gpuTimer_.last().identity.settingsRevision!=revision)||(epoch&&gpuTimer_.last().identity.epoch!=epoch)){diagnostics::GpuSample pending;pending.state=diagnostics::SampleState::Pending;return pending;}return gpuTimer_.last().gpu[size_t(diagnostics::GpuStage::Blit)];}
     // Application-side frame-generation timing for present-sink backends

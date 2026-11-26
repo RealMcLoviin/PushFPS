@@ -42,6 +42,7 @@ int thunkReplacementFunction(int value) { ++thunkHookCalls; return thunkOriginal
 #include "veyra/engine/PresentationGeometry.h"
 #include "veyra/gfx/NvidiaVrr.h"
 #include "NvidiaLowLatencyTests.h"
+#include "veyra/engine/VideoPresenter.h"
 #include "veyra/engine/DoviCurveAdapter.h"
 #include "veyra/engine/DoviBlElCompose.h"
 #include "veyra/pipeline/DolbyVisionP7.h"
@@ -78,6 +79,17 @@ int main(){
         check(gfx::vrrFromFreeSync(gfx::pushFreeSyncFrom(0,0xf,0,7)).amd,"a FreeSync answer says it is AMD's");
         check(!gfx::vrrFromFreeSync(gfx::pushFreeSyncFrom(0,0xf,0,7)).enabled&&!gfx::vrrFromFreeSync(gfx::pushFreeSyncFrom(0,0xf,0,7)).inVrrMode,"FreeSync is never reported active");
         check(gfx::vrrLevel(gfx::vrrFromFreeSync(gfx::PushFreeSync{}))==0,"no AMD answer stays unknown");
+        engine::PresentationSettings req;
+        req.variableRefresh=true;
+        req.display=engine::DisplaySync::Automatic;
+        const auto amd=gfx::vrrFromFreeSync(gfx::pushFreeSyncFrom(0,0xf,0,7));
+        check(engine::VideoPresenter::vrrSyncWanted(req,amd)&&!engine::VideoPresenter::vrrSyncApplied(req,amd),
+            "FreeSync requested but inactive does not wait on VSync");
+        auto active=amd;active.enabled=true;
+        check(gfx::vrrLevel(active)==4&&engine::VideoPresenter::vrrSyncApplied(req,active),
+            "driver-active VRR still pairs VSync");
+        req.variableRefresh=false;
+        check(!engine::VideoPresenter::vrrSyncApplied(req,active),"VRR switch off never pairs VSync");
     }
     {
         engine::PreviewView v;v.displayAspect=16.0/9;
